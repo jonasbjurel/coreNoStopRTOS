@@ -29,8 +29,8 @@
 
 #ifndef myTestTask_HEADER_INCLUDED
 	#define  myTestTask_HEADER_INCLUDED
-	#include "log.h"
-	#include "init.h"
+	#include "../src/log.h"
+	#include "../src/init.h"
 	
 	void myTestTask(task_desc_t* myTask);
 #endif

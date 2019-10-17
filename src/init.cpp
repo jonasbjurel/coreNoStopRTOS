@@ -24,7 +24,7 @@
  * ************************************************************************************************* */
 
 #include "init.h"
-#include "myTestTask.h"
+#include "../ci/myTestTask.h"
 
 tasks initd;
 
