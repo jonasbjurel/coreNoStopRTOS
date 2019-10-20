@@ -15,24 +15,22 @@
 
  /* ************************************************************************************************ *
   * Project:			 coreNoStopRTOS/www.......                                                   *
-  * Name:				 myTestTask.h                                                                *
-  * Created:			 2019-09-27                                                                  *
+  * Name:				 initfunc.h                                                                  *
+  * Created:			 2019-10-18                                                                  *
   * Originator:		     Jonas Bjurel                                                                *
-  * Short description:   Provides CI (Continous Integration) test stimuli for coreNoStopRTOS         *
-  *                      functions...                                                                *
+  * Short description:   Defines system init functions to be called at system restart, before        *
+  *                      coreNoStopRTOS scheduling has started. These functions will run in to       *
+  *                      completion, in series, without any parallelism                              *
   * Resources:           github, WIKI .....                                                          *
   * ************************************************************************************************ */
 
-#ifndef arduino_HEADER_INCLUDED
-	#define arduino_HEADER_INCLUDED
-	#include <Arduino.h>
-#endif
+#ifndef initFunc_HEADER_INCLUDED
+	#define initFunc_HEADER_INCLUDED
 
-#ifndef myTestTask_HEADER_INCLUDED
-	#define  myTestTask_HEADER_INCLUDED
-	#include "../src/log.h"
-	#include "../src/init.h"
+    // Include header files for initFuncs
+	#include "../ci/myTestTask.h"
 
-	void myTestTaskInit(void);
-	void myTestTask(task_desc_t* myTask);
+    // Define the list of init functions to be called at system restart
+	void (*initFuncs[])() = {myTestTaskInit};
+
 #endif
