@@ -24,13 +24,14 @@
   * Resources:           github, WIKI .....                                                          *
   * ************************************************************************************************ */
 
+
+
 #ifndef initFunc_HEADER_INCLUDED
 	#define initFunc_HEADER_INCLUDED
-
-    // Include header files for initFuncs
+	#include "init.h"
 	#include "../ci/myTestTask.h"
 
     // Define the list of init functions to be called at system restart
-	void (*initFuncs[])() = {myTestTaskInit};
+    void (*initFuncs[])() = { myTestTaskInit };
 
 #endif

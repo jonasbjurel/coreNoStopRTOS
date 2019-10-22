@@ -61,7 +61,7 @@
 			: __FILE__ \
 			)
 
-#define logdAssert(severity, ...) {sprintf (logstr, "%u %u in function %s, line %u: ", xTaskGetTickCount(), severity,__FUNCTION__, __LINE__-3);\
+	#define logdAssert(severity, ...) {sprintf (logstr, "%u %u in function %s, line %u: ", xTaskGetTickCount(), severity,__FUNCTION__, __LINE__);\
                                        Serial.print(logstr);\
                                        sprintf (logstr,__VA_ARGS__);\
                                        Serial.print(logstr);\

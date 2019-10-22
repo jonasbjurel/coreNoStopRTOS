@@ -28,11 +28,13 @@
 	#include <Arduino.h>
 #endif
 
-#ifndef myTestTask_HEADER_INCLUDED
-	#define  myTestTask_HEADER_INCLUDED
-	#include "../src/log.h"
-	#include "../src/init.h"
 
+
+#ifndef myTestTask_HEADER_INCLUDED
+    #include "../src/log.h"
+    #include "../src/init.h"
+	#define  myTestTask_HEADER_INCLUDED
 	void myTestTaskInit(void);
-	void myTestTask(task_desc_t* myTask);
+	void myStaticTestTask(task_desc_t* myTask);
+	void myDynamicTestTask(char* taskName);
 #endif

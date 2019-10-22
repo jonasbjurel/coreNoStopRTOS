@@ -30,8 +30,7 @@
 
 #ifndef init_HEADER_INCLUDED
 #define init_HEADER_INCLUDED
-	#include "log.h"
-	#include "initfunc.h"
+    #include "log.h"
 
 	struct task_resource_t {
 		task_resource_t* prevResource_p;
@@ -48,7 +47,7 @@
 	struct task_desc_t {
 		// Task definitions
 		TaskFunction_t pvTaskCode;
-		char pcName[20]; // A descriptive name for the task
+		char* pcName; // A descriptive name for the task
 		uint32_t usStackDepth; //The size of the task stack specified as the number of bytes [1024]
 		void* pvParameters; //Pointer that will be used as the parameter for the task being created
 		UBaseType_t uxPriority; //The priority at which the task should run. 0-3 where 3 is the highest
@@ -81,12 +80,18 @@
 /* Init system parameters                                                                        */
 /* Description: System parameters defining resource usage and scalability metrics	             */
 /*                                                                                               */
-	#define MAX_NO_OF_INIT_FUNCTIONS 32    // Maximum number of user init functions
-	#define MAX_NO_OF_STATIC_TASKS 64      // Maximum number of user static tasks
-    #define _TASK_WATCHDOG_MS_ 10          // ms between init watchdog runs
-	#define _WATCHDOG_DISABLE_ UINT32_MAX; //Applied to task_desc_t.watchDogTimer to temporallily 
-	                                       //disable the watchdog
-	extern char logstr[320];		       //TODO: Move to log.c and log.h
+	#define MAX_NO_OF_INIT_FUNCTIONS 32         // Maximum number of user init functions
+	#define MAX_NO_OF_STATIC_TASKS 64           // Maximum number of user static tasks
+    #define _TASK_WATCHDOG_MS_ 10               // ms between init watchdog runs
+	#define _WATCHDOG_DISABLE_ UINT32_MAX       //Applied to task_desc_t.watchDogTimer to temporallily 
+	                                            //disable the watchdog
+    #define _WATCHDOG_DISABLE_MONIT_ UINT32_MAX //Used in startStaticTask(...) and 
+	                                            //startDynamicTask(...) to disable watchdog, but
+	                                            //still monitor the task.
+    #define _WATCHDOG_DISABLE_NO_MONIT_ 0       //Used in startStaticTask(...) and 
+	                                            //startDynamicTask(...) to disable watchdog, and
+	                                            //not monitor the task.
+	extern char logstr[320];		            //TODO: Move to log.c and log.h
 
 /* ********************************************************************************************* */
 /* init methods Return codes                                                                     */
@@ -118,7 +123,7 @@
 		void* taskMalloc(task_desc_t* task_p, int size); // Static tasks method for allocating init supervised memory
 		uint8_t taskMfree(task_desc_t* task_p, void* mem_p); //Static tasks method for freeing init supervised memory
 		uint8_t getTidByTaskDesc(uint8_t* tid, task_desc_t* task); // Get init Task ID (TID) by task handle
-		uint8_t startStaticTask(TaskFunction_t taskFunc, char taskName[20], void* taskParams, uint32_t stackDepth, UBaseType_t taskPrio,
+		uint8_t startStaticTask(TaskFunction_t taskFunc, const char* taskName, void* taskParams, uint32_t stackDepth, UBaseType_t taskPrio,
 								BaseType_t taskPinning, uint32_t watchdogTimeout, uint8_t watchdogWarnPerc, uint8_t stackWarnPerc,
 								uint32_t heapWarnKB, uint8_t restartEscalationCnt); //Start a static task - monitored by init
 		TaskHandle_t startDynamicTask(TaskFunction_t taskFunc, char taskName[20], void* taskParams, uint32_t stackDepth, UBaseType_t taskPrio,

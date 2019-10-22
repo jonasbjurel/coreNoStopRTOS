@@ -107,6 +107,7 @@
   <ItemGroup>
     <ClCompile Include="ci\myTestTask.cpp" />
     <ClCompile Include="src\init.cpp" />
+    <ClCompile Include="src\initfunc.cpp" />
     <ClCompile Include="src\log.cpp" />
   </ItemGroup>
   <ItemGroup>

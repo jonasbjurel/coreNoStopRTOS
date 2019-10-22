@@ -24,10 +24,10 @@
  * ************************************************************************************************* */
 
 #include "init.h"
+#include "initfunc.h"
 
-
- /* ********************************************************************************************* */
- /* Init static definitions                                                                       */
+/* ********************************************************************************************* */
+/* Init static definitions                                                                       */
 
 tasks initd;
 bool tasks::tasksObjExist = false; //TODO Test that tasks cant be instantiated twisse
@@ -49,7 +49,7 @@ char logstr[320]; //TODO: move to log.c and log.h
 
 /* ********************************************************************************************* */
 /* Init system construction, initiation and dsestruction                                         */
-/* Description: System parameters defining resource usage and scalability metrics	             */
+/* Description: tasks constructor	                                                             */
 /*                                                                                               */
 tasks::tasks() {
 	if (tasksObjExist) {
@@ -59,14 +59,23 @@ tasks::tasks() {
 	tasksObjExist = true;
 }
 
+/* ********************************************************************************************* */
+/* Init system initialization                                                                    */
+/* Description: Initialize all variables, resources and calls user init functions registered in  */
+/* initfunc.h                                                                                    */
+/*                                                                                               */
 void tasks::startInit(void) {
 	globalInitMutex = xSemaphoreCreateRecursiveMutex();
 	logdAssert(_INFO_, "System is being started, initializing initd...");
 	sleep(1); // DO WE NEED TO SLEEP?
-	logdAssert(_INFO_, "Initiating user init tasks...");
-	for (uint8_t i = 0; i < sizeof((void*)initFuncs); i++) {
+	//logdAssert(_INFO_, "Initiating user init tasks...");
+	//logdAssert(_INFO_, "Size of init tasks is %u", sizeof((void*)initFuncs) / sizeof((void*)initFuncs[0]));
+	for (uint8_t i = 0; i < sizeof((void*)initFuncs)/ sizeof((void*)initFuncs[0]); i++) {
+		//logdAssert(_DEBUG_, "Initfunction i %u will be ran", i);
 		initFuncs[i]();
+		//logdAssert(_DEBUG_, "Initfunction i %u ran...", i);
 	}
+	logdAssert(_INFO_, "All user init functions ran...");
 	if (uint8_t res = initd.startAllTasks(false, true)) { //start all registered static tasks without incrementing restartCnt, but inititiating dynamic statistics data.
 		logdAssert(_PANIC_, "Could not start all registered static tasks, cause %u  - RESTARTING THE SYSTEM...", res);
 		ESP.restart();
@@ -78,54 +87,92 @@ void tasks::startInit(void) {
 		logdAssert(_PANIC_, "Could not get a initd watchdog timer - RESTARTING THE SYSTEM...");
 		ESP.restart();
 	}
-	if (xTimerStart(watchDogTimer, 0) != pdPASS) {
-		logdAssert(_PANIC_, "Could not start the initd watchdog timer - RESTARTING THE SYSTEM...");
-		ESP.restart();
-	}
-	vTaskStartScheduler();
 	schedulerRunning = true;
 	logdAssert(_INFO_, "initd scheduler has started");
+
+	if (xTimerStart(watchDogTimer, 0) != pdPASS) {
+		ESP.restart();
+	}
+	logdAssert(_INFO_, "Watchdog started");
+	//Assert System OK indication callback
 }
 
+/* ********************************************************************************************* */
+/* Init system destructor                                                                        */
+/* Description: Not supported, will cause system panic and restart                               */
+/*                                                                                               */
 tasks::~tasks() {
 	logdAssert(_PANIC_, "Someone is trying to destruct initd - RESTARTING THE SYSTEM...");
 	ESP.restart();
 }
 
+/* ****************************************** Task control ***************************************** */
+/* Init system task controling methods.                                                              */
+/* Description: start/stop tasks with various properties and task pointing methods.	                 */
+/*                                                                                                   */
+/* Public:                                                                                           */
+/* uint8_t startStaticTask(......) - Start or register a static task monitored by init               */
+/* TaskHandle_t tasks::startDynamicTask(...) - Start a dynamic task not at all monitored by init     */
+/*                                                                                                   */
+/* Private:                                                                                          */
+/* uint8_t startAllTasks(...) - start all static tasks previously registered with startStaticTask    */ 
+/* uint8_t stopAllTasks() - stop all static tasks previously registered with startStaticTask         */
+/* uint8_t startTaskByName(...) - start a static task by name registered with startStaticTask        */
+/* uint8_t stopTaskByName(...) - stop a static task by name registered with startStaticTask          */
+/* uint8_t startTaskByTid(...) - start a static task by its task ID                                  */
+/* uint8_t stopTaskByTid(...) - stop a static task by its task ID                                    */
+/* uint8_t startTaskByTaskDesc(...) - start a static task by task descriptor prev. registerd         */
+/* uint8_t stopTaskByTaskDesc(...) - stop a static task by task descriptor prev. registerd           */
+/* ------------------------------------------------------------------------------------------------- */
 
-/* ********************************************************************************************* */
-/* Init system construction, initiation and dsestruction                                         */
-/* Description: Creating, initializing and (not supported) destruction of the init system monitor*/
-uint8_t tasks::getTidByTaskDesc(uint8_t* tid, task_desc_t* task) {
-	
-	if (task == NULL) {
-		return(_TASKS_API_PARAMETER_ERROR_);
-	}
 
-	for (uint8_t i = 0; i < noOfTasks; i++) {
-		if (classTasktable[i] == task) {
-			*tid = i;
-			return(_TASKS_OK_);
-			break;
-		}
-	}
-	return(_TASKS_NOT_FOUND_);
-}
+/* ------------------------------------- PUBLIC:startStaticTask -------------------------------------*/
+/* uint8_t startStaticTask(TaskFunction_t taskFunc, char taskName[20], void* taskParams,             */
+/*                         uint32_t stackDepth, UBaseType_t taskPrio, BaseType_t taskPinning,        */
+/*                         uint32_t watchdogTimeout, uint8_t watchdogWarnPerc,                       */
+/*                         uint8_t stackWarnPerc, uint32_t heapWarnKB, uint8_t restartEscalationCnt) */
+/*	Description: This method registers and starts a static task. If the this method is called before */
+/*               the init scheduler has been started it will register the task and start it when     */
+/*               once the init scheduler is started. If the scheduler is already running it will     */
+/*               register the task and immediately start it.                                         */
+/*               The task must never return, but it might kill it self usning vTaskDelete(NULL)      */
+/*               The task may be monitored by init using watchdog.                                   */
+/*               Dynamic resources allocated by the task such as memory (taskMalloc/taskMfree)       */
+/*               such that these resources are tidied up when a task has crashed or being deleted.   */
+/*               malloc/free should not be used. Neither should other methods creating dynamic       */
+/*               resources                                                                           */
+/*  Properties:  Public method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  TaskFunction_t taskFunc - The task function to be called                            */
+/*               char taskName[20] - A textual name of the task                                      */
+/*               void* taskParams - Parameters to be passed to the task function                     */
+/*               uint32_t stackDepth - The stack depth provided to the task                          */
+/*               UBaseType_t taskPrio - Priority - higher numbers - higher prio.                     */
+/*               BaseType_t taskPinning - pinning to a core [0|1|tskNO_AFFINITY]                     */
+/*               uint32_t watchdogTimeout - Number of watchdog runs (without watchdog kicking)       */
+/*                                          before the init watchdog restarts the task               */
+/*                                          in ms: _TASK_WATCHDOG_MS_ * watchdogTimeout              */
+/*                                          In case set to zero, the task will not be monitored      */
+/*               uint8_t watchdogWarnPerc - Warning level for the watchdog [%]                       */
+/*               uint8_t stackWarnPerc - Stack warning level [%]                                     */
+/*               uint32_t heapWarnKB - Warning level for heap usage [KB]                             */
+/*               uint8_t restartEscalationCnt - Task restarts leading up to a system panic/restart   */
+/*                                              The restartEscalationCnt will be decreased every     */
+/*                                              minute. If set to zero, task restart never escalates */
+/*                                              to a system panic/restart                            */
+/*                                                                                                   */
 
-/* ********************************************************************************************* */
-/* Init system task controling methods.                                                          */
-/* Description: start/stop tasks with various properties and task pointing methods.	             */
-/*                                                                                               */
-
-uint8_t tasks::startStaticTask(TaskFunction_t taskFunc, char taskName[20], void* taskParams, uint32_t stackDepth, UBaseType_t taskPrio,
+uint8_t tasks::startStaticTask(TaskFunction_t taskFunc, const char* taskName, void* taskParams, uint32_t stackDepth, UBaseType_t taskPrio,
 	                    BaseType_t taskPinning, uint32_t watchdogTimeout, uint8_t watchdogWarnPerc, uint8_t stackWarnPerc,
 	                    uint32_t heapWarnKB, uint8_t restartEscalationCnt) {
 
 	globalInitMutexTake();
-	noOfTasks++;
 	classTasktable[noOfTasks] = (task_desc_t*)malloc(sizeof(task_desc_t));
 	classTasktable[noOfTasks]->pvTaskCode = taskFunc;
-	classTasktable[noOfTasks]->pcName[20] = taskName[20];
+	classTasktable[noOfTasks]->pcName = (char*) malloc(20);
+	strcpy(classTasktable[noOfTasks]->pcName, taskName);
 	classTasktable[noOfTasks]->pvParameters = taskParams;
 	classTasktable[noOfTasks]->usStackDepth = stackDepth;
 	classTasktable[noOfTasks]->uxPriority = taskPrio;
@@ -136,8 +183,8 @@ uint8_t tasks::startStaticTask(TaskFunction_t taskFunc, char taskName[20], void*
 	classTasktable[noOfTasks]->heapHighWatermarkKBWarn = heapWarnKB;
 	classTasktable[noOfTasks]->escalationRestartCnt = restartEscalationCnt;
 	classTasktable[noOfTasks]->pvCreatedTask = NULL;
-
 	classTasktable[noOfTasks]->taskWatchDogMutex = xSemaphoreCreateRecursiveMutex();
+	classTasktable[noOfTasks]->dynMemObjects_p = NULL;
 	
 	if (schedulerRunning) {
 		if (uint8_t res = startTaskByTaskDesc(classTasktable[noOfTasks], false, true)) { //Start a static task while the scheduler is running
@@ -145,13 +192,34 @@ uint8_t tasks::startStaticTask(TaskFunction_t taskFunc, char taskName[20], void*
 			globalInitMutexGive();
 			return(res);
 		}
-		logdAssert(_INFO_, "Static task  %s, tid: %d has been started", classTasktable[noOfTasks]->pcName, noOfTasks);
+		logdAssert(_INFO_, "Static task  %s, tid: %u has been started", classTasktable[noOfTasks]->pcName, noOfTasks);
 	}
-	logdAssert(_INFO_, "Static task  %s, tid: %d has been registered and will be started when scheduling is started", classTasktable[noOfTasks]->pcName, noOfTasks);
+	noOfTasks++;
 	globalInitMutexGive();
 	return(_TASKS_OK_);
 }
+/* -------------------------------------- END:startStaticTask ---------------------------------------*/
 
+/* ------------------------------------ PUBLIC:startDynamicTask -------------------------------------*/
+/* TaskHandle_t tasks::startDynamicTask(TaskFunction_t taskFunc, char taskName[20], void* taskParams,*/
+/*                                      uint32_t stackDepth, UBaseType_t taskPrio,                   */
+/*                                      BaseType_t taskPinning                                       */
+/* Description:  This method starts a dynamic task which is not tracked or monitored by the init     */
+/*               system in any way. If the this method is called before the init scheduler has been  */
+/*               started the task will be started once the init scheduler is started.                */
+/*               The task must never return, but it might kill it self usning vTaskDelete(NULL)      */
+/*               Since dynamic tasks are not monitored, and any resources created inside are not     */
+/*               not tracked - it is a good practice to allocate dynamic resources with dynamic tasks*/
+/*  Properties:  Public method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return:      Returns the task handle [ TaskHandle_t]                                             */
+/*  Parameters:  TaskFunction_t taskFunc - The task function to be called                            */
+/*               char taskName[20] - A textual name of the task                                      */
+/*               void* taskParams - Parameters to be passed to the task function                     */
+/*               uint32_t stackDepth - The stack depth provided to the task                          */
+/*               UBaseType_t taskPrio - Priority - higher numbers - higher prio.                     */
+/*               BaseType_t taskPinning - pinning to a core [0|1|tskNO_AFFINITY]                     */
+/*                                                                                                   */
 TaskHandle_t tasks::startDynamicTask(TaskFunction_t taskFunc, char taskName[20], void* taskParams, uint32_t stackDepth, UBaseType_t taskPrio,
 	BaseType_t taskPinning) {
 	TaskHandle_t dynamicTaskHandle;
@@ -162,16 +230,29 @@ TaskHandle_t tasks::startDynamicTask(TaskFunction_t taskFunc, char taskName[20],
 		globalInitMutexGive();
 		return(NULL);
 	}
-	logdAssert(_DEBUG_, "Dynamic task %s task has been started", taskName);
+	//logdAssert(_DEBUG_, "Dynamic task %s task has been started", taskName);
 	globalInitMutexGive();
 	return(dynamicTaskHandle);
 }
+/* --------------------------------------- END:startDynamicTask -------------------------------------*/
 
+/* -------------------------------------- PRIVATE:startAllTasks -------------------------------------*/
+/* uint8_t tasks::startAllTasks(bool incrementRestartCnt, bool initiateStat)                         */
+/* Description:  Start all static tasks that previously registered with                              */
+/*               uint8_t startStaticTask(...)                                                        */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  bool incrementRestartCnt - if true, each tasks restart cnt is incremented           */
+/*               bool initiateStat - if true each tasks stats are reset                              */
+/*                                                                                                   */
 uint8_t tasks::startAllTasks(bool incrementRestartCnt, bool initiateStat) {
 	globalInitMutexTake();
-	logdAssert(_INFO_, "All tasks will be started/restarted");
-	for (uint8_t i = noOfTasks-1; i < noOfTasks; i--) {
-		logdAssert(_INFO_, "Tasks name: %s, tid: %u is being initiated", classTasktable[i]->pcName, i);
+	logdAssert(_INFO_, "%u static tasks has been registered, and will be started/restarted", noOfTasks);
+	for (uint8_t i = 0; i < noOfTasks; i++) {
+		//logdAssert(_INFO_, "Tasks name: %s, tid: %u is being initiated", classTasktable[i]->pcName, i);
+		//logdAssert(_DEBUG_, "Tasks name: %s, tid: %u is being initiated with param %u", classTasktable[i]->pcName, i, *((uint8_t*)(classTasktable[i]->pvParameters)));
 		if (uint8_t res = startTaskByTaskDesc(classTasktable[i], incrementRestartCnt, initiateStat)) {
 			globalInitMutexGive();
 			logdAssert(_ERR_, "Tasks name: %s, tid: %d didn't start, cause: %u", classTasktable[i]->pcName, i, res);
@@ -183,7 +264,18 @@ uint8_t tasks::startAllTasks(bool incrementRestartCnt, bool initiateStat) {
 	globalInitMutexGive();
 	return(_TASKS_OK_);
 }
+/* ---------------------------------------- END:startAllTasks ---------------------------------------*/
 
+/* -------------------------------------- PRIVATE:stopAllTasks --------------------------------------*/
+/* uint8_t tasks::stopAllTasks(bool incrementRestartCnt, bool initiateStat)                          */
+/* Description:  Stop all static tasks that previously registered with                               */
+/*               uint8_t startStaticTask(...)                                                        */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  -                                                                                   */
+/*                                                                                                   */
 uint8_t tasks::stopAllTasks() {
 	globalInitMutexTake();
 	//logdAssert(_DEBUG_, "Stoping all tasks");
@@ -200,6 +292,20 @@ uint8_t tasks::stopAllTasks() {
 	globalInitMutexGive();
 	return(_TASKS_OK_);
 }
+/* ---------------------------------------- END:stopAllTasks ----------------------------------------*/
+
+/* ------------------------------------ PRIVATE:startTaskByName -------------------------------------*/
+/* uint8_t startTaskByName(char* pcName, bool incrementRestartCnt, bool initiateStat)                */
+/* Description:  start a static task by its name previously registered with                          */
+/*               uint8_t startStaticTask(...)                                                        */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  char* pcName - the textual name of the static function                              */
+/*               bool incrementRestartCnt - if true, each tasks restart cnt is incremented           */
+/*               bool initiateStat - if true each tasks stats are reset                              */
+/*                                                                                                   */
 
 uint8_t tasks::startTaskByName(char* pcName, bool incrementRestartCnt, bool initiateStat) {
 	task_desc_t* task_p;
@@ -220,23 +326,18 @@ uint8_t tasks::startTaskByName(char* pcName, bool incrementRestartCnt, bool init
 	//logdAssert(_INFO_, "Task: %s started/restarted", pcName);
 	return(_TASKS_OK_);
 }
+/* -------------------------------------- END:startTaskByName ---------------------------------------*/
 
-uint8_t tasks::startTaskByTid(uint8_t tid, bool incrementRestartCnt, bool initiateStat) {
-	//logdAssert(_INFO_, "Trying to start/restart task tid: %u", tid);
-	if (tid >= noOfTasks) {
-		logdAssert(_ERR_, "Parameter error, tid: %u", tid);
-		return(_TASKS_API_PARAMETER_ERROR_);
-	}
-	taskInitMutexTake(classTasktable[tid]);
-	if (uint8_t res = startTaskByTaskDesc(classTasktable[tid], incrementRestartCnt, initiateStat)) {
-		logdAssert(_ERR_, "Could not start task by descriptor, tid: %u, cause: %u", tid, res);
-		return (res);
-	}
-	taskInitMutexGive(classTasktable[tid]);
-	//logdAssert(_INFO_, "Task tid: %u started/restarted", tid);
-	return(_TASKS_OK_);
-}
-
+/* ------------------------------------- PRIVATE:stopTaskByName -------------------------------------*/
+/* uint8_t tasks::stopTaskByName(char* pcName)                                                       */
+/* Description:  stop a static task by its name previously registered with                           */
+/*               uint8_t startStaticTask(...)                                                        */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  char* pcName - the textual name of the static function                              */
+/*                                                                                                   */
 uint8_t tasks::stopTaskByName(char* pcName) {
 	task_desc_t* task_p;
 	//logdAssert(_INFO_, "Trying to stop task name: %s", task->pcName);
@@ -257,7 +358,47 @@ uint8_t tasks::stopTaskByName(char* pcName) {
 		return(_TASKS_OK_);
 	}
 }
+/* --------------------------------------- END:stopTaskByName ---------------------------------------*/
 
+/* ------------------------------------- PRIVATE:startTaskByTid -------------------------------------*/
+/* uint8_t startTaskByTid(uint8_t tid, bool incrementRestartCnt, bool initiateStat)                  */
+/* Description:  start a static task by its task id previously registered with                       */
+/*               uint8_t startStaticTask(...)                                                        */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  uint8_t tid - the task ID                                                           */
+/*               bool incrementRestartCnt - if true, each tasks restart cnt is incremented           */
+/*               bool initiateStat - if true each tasks stats are reset                              */
+/*                                                                                                   */
+uint8_t tasks::startTaskByTid(uint8_t tid, bool incrementRestartCnt, bool initiateStat) {
+	//logdAssert(_INFO_, "Trying to start/restart task tid: %u", tid);
+	if (tid >= noOfTasks) {
+		logdAssert(_ERR_, "Parameter error, tid: %u", tid);
+		return(_TASKS_API_PARAMETER_ERROR_);
+	}
+	taskInitMutexTake(classTasktable[tid]);
+	if (uint8_t res = startTaskByTaskDesc(classTasktable[tid], incrementRestartCnt, initiateStat)) {
+		logdAssert(_ERR_, "Could not start task by descriptor, tid: %u, cause: %u", tid, res);
+		return (res);
+	}
+	taskInitMutexGive(classTasktable[tid]);
+	//logdAssert(_INFO_, "Task tid: %u started/restarted", tid);
+	return(_TASKS_OK_);
+}
+/* --------------------------------------- END:startTaskByTid ---------------------------------------*/
+
+/* -------------------------------------- PRIVATE:stopTaskByTid -------------------------------------*/
+/* uint8_t stopTaskByTid(uint8_t tid)                                                                */
+/* Description:  stops a static task by its task id previously registered with                       */
+/*               uint8_t startStaticTask(...)                                                        */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  uint8_t tid - the task ID                                                           */
+/*                                                                                                   */
 uint8_t tasks::stopTaskByTid(uint8_t tid) {
 	//logdAssert(_INFO_, "Trying to stop task tid: %u", tid);
 	if (tid >= noOfTasks) {
@@ -276,9 +417,25 @@ uint8_t tasks::stopTaskByTid(uint8_t tid) {
 		return(_TASKS_OK_);
 	}
 }
+/* ---------------------------------------- END:stopTaskByTid ---------------------------------------*/
 
+/* ----------------------------------- PRIVATE:startTaskByTaskDec -----------------------------------*/
+/* uint8_t startTaskByTaskDesc(task_desc_t* task_p, bool incrementRestartCnt,                        */
+/*                             bool initiateStat)                                                    */
+/* Description:  starts a static task by its task descriptor previously registered with              */
+/*               uint8_t startStaticTask(...)                                                        */
+/*               This is the prime method to start a dynamic task, all other methods are in the end  */
+/*               using this method to start a static task                                            */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  task_desc_t* task_p - task descriptor                                               */
+/*               bool incrementRestartCnt - if true, each tasks restart cnt is incremented           */
+/*               bool initiateStat - if true each tasks stats are reset                              */
+/*                                                                                                   */
 uint8_t tasks::startTaskByTaskDesc(task_desc_t* task_p, bool incrementRestartCnt, bool initiateStat) {
-	//logdAssert(_INFO_, "Start task: %s by descriptor", task_p->pcName);
+	//logdAssert(_DEBUG_, "Start task: %s by descriptor %p", task_p->pcName, task_p);
 	if (task_p == NULL) {
 		logdAssert(_ERR_, "Parameter error - task_p=NULL");
 		return(_TASKS_API_PARAMETER_ERROR_);
@@ -306,19 +463,24 @@ uint8_t tasks::startTaskByTaskDesc(task_desc_t* task_p, bool incrementRestartCnt
 				//logdAssert(_DEBUG_, "Reset restart cnt");
 				task_p->restartCnt = 0;
 			}
-			//logdAssert(_DEBUG_, "Incremented restart cnt, now %u", task_p->restartCnt);
+			//logdAssert(_DEBUG_, "Incremented restart cnt for task %s now %u", task_p->pcName, task_p->restartCnt);
 		}
+	}
+	else {
+		//logdAssert(_DEBUG_, "Reset restart cnt for task %s", task_p->pcName);
+		task_p->restartCnt = 0;
 	}
 	if (initiateStat) {
 		clearStats(task_p);
 	}
 	//logdAssert(_DEBUG_, "*task_p %p taskhandle %p", task_p, task_p->pvCreatedTask);
-	//(_DEBUG_, "Resetting watchdog timer for Task: %s", task_p->pcName);
+	//logdAssert(_DEBUG_, "Resetting watchdog timer for Task: %s", task_p->pcName);
 	task_p->watchDogTimer = 0;
 
 	//logdAssert(_DEBUG_, "Watchdog cleared");
+	//logdAssert(_DEBUG_, "Params before starting task %u", *((uint8_t*)(task_p->pvParameters)));
+	//logdAssert(_DEBUG_, "Starting task with function pointer %p named %s", task_p->pvTaskCode, task_p->pcName);
 
-	//logdAssert(_DEBUG_, "Starting task");
 	if (xTaskCreatePinnedToCore(
 		task_p->pvTaskCode,
 		task_p->pcName,
@@ -334,10 +496,25 @@ uint8_t tasks::startTaskByTaskDesc(task_desc_t* task_p, bool incrementRestartCnt
 	//logdAssert(_DEBUG_, "Giving back the Mutex");
 	taskInitMutexGive(task_p);
 	//logdAssert(_DEBUG_, "The Mutex is given back");
-	logdAssert(_INFO_, "Task: %s was started/restarted", task_p->pcName);
+	//logdAssert(_INFO_, "Task: %s was started/restarted", task_p->pcName);
+	//logdAssert(_DEBUG_, "Leaving starttaskbytaskdesc");
+
 	return(_TASKS_OK_);
 }
+/* ------------------------------------- END:startTaskByTaskDec -------------------------------------*/
 
+/* ------------------------------------ PRIVATE:stopTaskByTaskDec -----------------------------------*/
+/* uint8_t tasks::stopTaskByTaskDesc(task_desc_t* task_p)                                            */
+/* Description:  stops a static task by its task descriptor previously registered with               */
+/*               uint8_t startStaticTask(...)                                                        */
+/*               This is the prime method to start a staticc task, all other methods are in the end  */
+/*               using this method to stop a static task                                             */
+/*  Properties:  Privat method.                                                                      */
+/*               This method is thread safe.                                                         */
+/*  Return codes:[_TASKS_OK_= 0 | _TASKS_RESOURCES_EXHAUSTED | _TASKS_API_PARAMETER_ERROR_ |         */
+/*               | _TASKS_GENERAL_ERROR_, _TASKS_NOT_FOUND_ | _TASKS_MUTEX_TIMEOUT_]                 */
+/*  Parameters:  task_desc_t* task_p - task descriptor                                               */
+/*                                                                                                   */
 uint8_t tasks::stopTaskByTaskDesc(task_desc_t* task_p) {
 	//logdAssert(_INFO_, "Trying to stop task: %s", task->pcName);
 	taskInitMutexTake(task_p);
@@ -356,11 +533,33 @@ uint8_t tasks::stopTaskByTaskDesc(task_desc_t* task_p) {
 		return(_TASKS_GENERAL_ERROR_);
 	}
 }
+/* -------------------------------------- END:stopTaskByTaskDec -------------------------------------*/
+/* **************************************** END Task control *************************************** */
+
 
 /* ********************************************************************************************* */
-/* Init object search and helper methods                                                         */
-/* Description: start/stop tasks with various properties and task pointing methods.	             */
+/* Various Init system system helper functions                                                   */
+/* Description:                                                                                  */
 /*                                                                                               */
+/* Public:                                                                                       */
+/* uint8_t getTidByTaskDesc(uint8_t* tid, task_desc_t* task)                                     */
+/* */
+
+uint8_t tasks::getTidByTaskDesc(uint8_t* tid, task_desc_t* task) {
+
+	if (task == NULL) {
+		return(_TASKS_API_PARAMETER_ERROR_);
+	}
+
+	for (uint8_t i = 0; i < noOfTasks; i++) {
+		if (classTasktable[i] == task) {
+			*tid = i;
+			return(_TASKS_OK_);
+			break;
+		}
+	}
+	return(_TASKS_NOT_FOUND_);
+}
 
 uint8_t tasks::getTaskDescByName(char* pcName, task_desc_t** task_pp) {
 	//logdAssert(_DEBUG_, "Trying to get task by name: %c", pcName);
@@ -405,12 +604,12 @@ uint8_t tasks::checkIfTaskAlive(task_desc_t* task_p) {
 	//logdAssert(_DEBUG_, "Mutex taken");
 	//logdAssert(_DEBUG_, "*task %p taskhandle %p", task, task->pvCreatedTask);
 	if (task_p->pvCreatedTask == NULL) {
-		logdAssert(_INFO_, "Task does not exist, handle = NULL");
+		//logdAssert(_INFO_, "Task does not exist, handle = NULL");
 		taskInitMutexGive(task_p);
 		return (_TASK_DELETED_);
 	}
 	if (eTaskGetState(task_p->pvCreatedTask) == 1 /*eDeleted*/) { //eDeleted doesn't work
-		logdAssert(_INFO_, "Task deleted");
+		//logdAssert(_INFO_, "Task deleted");
 		taskInitMutexGive(task_p);
 		return (_TASK_DELETED_);
 	}
@@ -439,6 +638,7 @@ uint8_t tasks::clearStats(task_desc_t* task_p) {
 	task_p->heapWarn = false;
 	task_p->stackHighWatermarkAbs = 0;
 	task_p->stackHighWatermarkWarnAbs = (task_p->stackHighWatermarkWarnPerc) * (task_p->usStackDepth) / 100;
+	task_p->restartCnt = 0;
 
 	taskInitMutexGive(task_p);
 	return(_TASKS_OK_);
@@ -467,7 +667,7 @@ uint8_t tasks::getStalledTasks(uint8_t* tid, task_desc_t* task_p) {
 }
 
 /* ************************** Task mutex/critical section handling  ******************************** */
-/* These methods are providing intends to provide secure pass through critical sections avoiding     */
+/* These methods intend to provide secure pass through critical sections avoiding                    */
 /* interfearence from parallel tasks/threads manipulating the datastructures being processed.        */
 /* Two access methods are defined: tasks:globalInitMutexTake/(Give) locking the entire tasks data-   */
 /* structure and:                                                                                    */
@@ -505,206 +705,6 @@ uint8_t tasks::taskInitMutexTake(task_desc_t* task_p, TickType_t timeout) { //Fi
 
 uint8_t tasks::taskInitMutexGive(task_desc_t* task_p) { //Fine grained task locks not yet implemente
 	return(globalInitMutexGive());
-}
-
-/* *************************** Task Management/watchdog core tasks  ******************************** */
-/* These tasks are periodic core init OS, monitoring spawned tasks, restarting those ig crashed      */
-/* or if watchdog expired, collecting and logging system and task statistics, and restarting the     */
-/* system if there is no other way out, or if these services are not responding - monitored by the   */
-/* Arduino main loop                                                                                 */
-/* ------------------------------------------------------------------------------------------------- */
-/* Public methods:                                                                                   */
-/* void tasks::kickTaskWatchdogs(...);                                                               */
-/*      tasks method to kick the watchdog in case task_dec_t.WatchdogTimeout != 0 [??? 10 ms ???]    */
-/* void tasks::taskPanic(...);                                                                       */
-/*      Initiates a graceful task panic exception handling, task will be terminated and it's         */
-/*      resources will be collected and cleaned.  The task might be restarted depending on           */
-/*      task_dec_t.WatchdogTimeout (if 0 the task will not be restarted, otherwise it will....       */
-/*                                                                                                   */
-/* Private methods:                                                                                  */
-/* void tasks:: runTaskWatchdogs(...)                                                                */
-/*         A core tasks timer method to run periodic maintenance tasks, checking watchdogs, task-    */
-/*         health, collecting and reporting statistics, etc.                                         */
-/*                                                                                                   */
-/* --------------------------------------------------------------------------------------------------*/
-
-/* --------------------------------- - Public:kickTaskWatchdogs()- --------------------------------- */
-/* void tasks::kickTaskWatchdogs(task_desc_t* task_p)                                                */
-/*	Description:  This method kicks the watchdog for task: task_p and needs to be called frequently  */
-/*                with a periodicy less than defined in task_desc_t.WatchdogTimeout                  */
-/*  Properties:   Public method. This method is thread safe.                                         */
-/*  Return codes: void                                                                               */
-void tasks::kickTaskWatchdogs(task_desc_t* task_p) {
-	task_p->watchDogTimer = 0; //atomic
-	return;
-}
-/* ---------------------------------- - END:kickTaskWatchdogs()- ----------------------------------- */
-
-/* ------------------------------------- - Public:taskPanic()- ------------------------------------- */
-/* void tasks::taskPanic(task_desc_t* task_p)                                                        */
-/*	Description:  Initiates a graceful task panic exception handling, task will be terminated and    */
-/*                it's resources will be collected and cleaned.  The task might be restarted         */
-/*                depending on task_dec_t.WatchdogTimeout (if 0 the task will not be restarted,      */
-/*                otherwise it will....
-/*  Properties:   Public method. This method is thread safe.                                         */
-/*  Return codes: void                                                                               */
-void tasks::taskPanic(task_desc_t* task_p) {
-	initd.taskMfreeAll(task_p);
-	//release any other resources
-	vTaskDelete(NULL);
-}
-/* -------------------------------------- - END:taskPanic() - -------------------------------------- */
-
-/* ---------------------------------- - Public:taskExceptions()- ----------------------------------- */
-
-// Stack-overflow management void vApplicationStackOverflowHook( TaskHandle_t xTask, signed char* pcTaskName );
-// Out of space handling void vApplicationMallocFailedHook( void );
-/* ------------------------------------ - END:taskExceptions()- ------------------------------------ */
-
-
-/* --------------------------------- - Private:runTaskWatchdogs() - -------------------------------- */
-/* void tasks::runTaskWatchdogs(TimerHandle_t xTimer)                                                */
-/*         A core tasks timer method to run periodic maintenance tasks, checking watchdogs, task-    */
-/*         health, collecting and reporting statistics, etc.                                         */
-/*         The periodicy of this task is set by: */
-/*                                                                                                   */
-void tasks::runTaskWatchdogs(TimerHandle_t xTimer) {
-	task_desc_t* task_p;
-	static int nexthunderedMSWatchdogTaskCnt = (100 / _TASK_WATCHDOG_MS_) + (100 % _TASK_WATCHDOG_MS_);
-	static int nextSecWatchdogTaskCnt = (1000 / _TASK_WATCHDOG_MS_) + (1000 % _TASK_WATCHDOG_MS_);
-	static int nextTenSecWatchdogTaskCnt = ((10*1000) / _TASK_WATCHDOG_MS_) + ((10*1000) % _TASK_WATCHDOG_MS_);
-	static int nextMinWatchdogTaskCnt = ((60 * 1000) / _TASK_WATCHDOG_MS_) + ((60 * 1000) % _TASK_WATCHDOG_MS_);
-	static int nextHourWatchdogTaskCnt = ((3600 * 1000) / _TASK_WATCHDOG_MS_) + ((3600 * 1000) % _TASK_WATCHDOG_MS_);
-	bool decreaseEscalationCnt = false;
-	static uint8_t minStatTaskWalk = 255;
-
-	if (xSemaphoreTake(watchdogMutex, 0) == pdFALSE) {
-		watchdogOverruns++;
-		//logdAssert(_DEBUG_, "Watchdog overrun, skipping this watchdog run");
-		return;
-	}
-//	logdAssert(_DEBUG_, "Running watchdogs nexthunderedMSWatchdogTaskCnt %u", nexthunderedMSWatchdogTaskCnt); 
-//	logdAssert(_DEBUG_, "Running watchdogs initd.watchdogTaskCnt %u initd.hunderedMsCnt %u", initd.watchdogTaskCnt, initd.hunderedMsCnt);
-	initd.watchdogTaskCnt++; //make sure it is initiated somewhere
-
-	//Every 100 ms tasks
-	if (initd.watchdogTaskCnt >= nexthunderedMSWatchdogTaskCnt) {
-		initd.hunderedMsCnt++;
-		//logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [100 ms]");
-		nexthunderedMSWatchdogTaskCnt = (initd.hunderedMsCnt + 1) * ((100 / _TASK_WATCHDOG_MS_) + (100 % _TASK_WATCHDOG_MS_));
-		// do short 1 second stuff here, long run tasks must be deferred evenly across the watchdog runs - 
-		//  any mutexes must be local in this "if second" context handled in here.
-
-		//Distributing minute statistics reporting work to 100 ms chunks.
-		if (minStatTaskWalk < noOfTasks) {
-			initd.getTaskDescByTID(minStatTaskWalk, &task_p);
-			logdAssert(_INFO_, "Heap size for Task %s is currently %u, with a high watermark of %u", task_p->pcName,
-				      task_p->heapCurr, task_p->heapHighWatermarkAbs);
-			logdAssert(_INFO_, "Stack use for Task %s is currently [currently unsupported], with a high watermark of %u",
-				      task_p->pcName, uxTaskGetStackHighWaterMark(task_p->pvCreatedTask));
-			logdAssert(_INFO_, "CPU use for Task %s is currently [currently unsupported]", task_p->pcName);
-			logdAssert(_INFO_, "Watchdog statistics for Task %s, High water mark %u, Timout set to %u", task_p->pcName, 
-				      task_p->watchdogHighWatermarkAbs, task_p->WatchdogTimeout);
-			minStatTaskWalk++;
-		}
-	}
-
-	//*** Every 1 second tasks
-	if (initd.watchdogTaskCnt >= nextSecWatchdogTaskCnt) {
-		initd.secCnt++;
-		//logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [second] - %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt%60, initd.secCnt%60);
-		nextSecWatchdogTaskCnt = (initd.secCnt + 1) * ((1000 / _TASK_WATCHDOG_MS_) + (1000 % _TASK_WATCHDOG_MS_));
-		// do short 1 second stuff here, long run tasks must be deferred evenly across the watchdog runs - 
-		//  any mutexes must be local in this "if second" context handled in here.
-	}
-
-	//*** Every 10 second tasks
-	if (initd.watchdogTaskCnt >= nextTenSecWatchdogTaskCnt) {
-		initd.tenSecCnt++;
-		logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [10 seconds] - %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt%60, initd.secCnt%60);
-		nextTenSecWatchdogTaskCnt = (initd.tenSecCnt + 1) * (((10 * 1000) / _TASK_WATCHDOG_MS_) + ((10 * 1000) % _TASK_WATCHDOG_MS_));
-		//  do short 10 second stuff here, long run tasks must be deferred evenly across the watchdog runs - 
-		//  any mutexes must be local in this "if tensecond" context handled in here.
-	}
-
-	//*** Every minute tasks
-	if (initd.watchdogTaskCnt >= nextMinWatchdogTaskCnt) {
-		initd.minCnt++;
-		logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [minute]- %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt%60, initd.secCnt%60);
-		logdAssert(_INFO_, "Watchdog overruns: %u", watchdogOverruns);
-		nextMinWatchdogTaskCnt = (initd.minCnt + 1) * (((60 * 1000) / _TASK_WATCHDOG_MS_) + ((60 * 1000) % _TASK_WATCHDOG_MS_));
-		//  do short minute stuff here, long run tasks must be deferred evenly across the watchdog runs - 
-		//  any mutexes must be local in this "if minute" context handled in here.
-		decreaseEscalationCnt = true;
-		minStatTaskWalk = 0;
-	}
-
-	//*** Houerly tasks
-	if (initd.watchdogTaskCnt >= nextHourWatchdogTaskCnt) {
-		logdAssert(_DEBUG_, "Running hourely recurring maintenance tasks");
-		initd.hourCnt++;
-		logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [hour]- %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt % 60, initd.secCnt % 60);
-		nextHourWatchdogTaskCnt = (initd.hourCnt + 1) * (((3600 * 1000) / _TASK_WATCHDOG_MS_) + ((3600 * 1000) % _TASK_WATCHDOG_MS_));
-		//  do short hour stuff here, long run tasks must be deferred evenly across the watchdog runs - 
-		//  any mutexes must be local in this "if hour" context handled in here.
-
-	}
-
-	initd.globalInitMutexTake();
-
-	for (uint8_t i = 0; i < noOfTasks; i++) {
-		//	logdAssert(_DEBUG_, "**classTasktable[%u] %p classTasktable[%u] %p", i, &classTasktable[i], i, classTasktable[i]);
-		//	logdAssert(_DEBUG_, "**task %p *task %p", &task_p, task_p);
-		initd.getTaskDescByTID(i, &task_p);
-		//	logdAssert(_DEBUG_, "**task %p *task %p", &task_p, task_p);
-		if (task_p == NULL) {
-			logdAssert(_PANIC_, "Could not find task by id: %u", i);
-			ESP.restart();
-		}
-		if (decreaseEscalationCnt && task_p->restartCnt) {
-			task_p->restartCnt--;
-		}
-
-		if (task_p->WatchdogTimeout && task_p->watchDogTimer != _WATCHDOG_DISABLE_) {
-			if (initd.checkIfTaskAlive(task_p)) {
-				task_p->watchDogTimer = _WATCHDOG_DISABLE_;
-				logdAssert(_ERR_, "Task: %s  has stalled", task_p->pcName);
-				initd.taskMfreeAll(task_p);
-				// Free any other static task resources
-				initd.startTaskByTid(i, true, false);
-			}
-			if (++(task_p->watchDogTimer) >= task_p->WatchdogTimeout) {
-				task_p->watchDogTimer = _WATCHDOG_DISABLE_;
-				logdAssert(_ERR_, "Watchdog timeout for Task: %s, watchdog counter: %u", task_p->pcName, task_p->watchDogTimer);
-				initd.taskMfreeAll(task_p);
-				// Free any other static task resources
-				initd.startTaskByTid(i, true, false);
-			}
-			else {
-				//logdAssert(_DEBUG_, "Breakpoint 6");
-				if (task_p->watchDogTimer > task_p->watchdogHighWatermarkAbs) {
-					//logdAssert(_DEBUG_, "Breakpoint 7");
-					task_p->watchdogHighWatermarkAbs = task_p->watchDogTimer;
-					if (task_p->watchdogHighWatermarkWarnPerc && task_p->watchdogHighWatermarkWarnAbs <= task_p->watchdogHighWatermarkAbs) {
-						//The logging below is likely causing stack overflow - need to increase configMINIMAL_STACK_SIZE
-						//logdAssert(_WARN_, "Watchdog count for Task: %s reached Warn level of: %u  percent, watchdog counter: %u" ,task_p->pcName, task_p->watchdogHighWatermarkWarnPerc, task_p->watchDogTimer);
-					}
-				}
-			}
-		}
-		//logdAssert(_DEBUG_, "Breakpoint 8 Task: %s, restartcnt %u", task_p->pcName, task_p->restartCnt);
-		if (task_p->escalationRestartCnt && task_p->restartCnt >= task_p->escalationRestartCnt) {
-			logdAssert(_PANIC_, "Task: %s has restarted exessively, escalating to system restart", task_p->pcName);
-			ESP.restart();
-		}
-		if (task_p->watchdogHighWatermarkAbs >= task_p->watchdogHighWatermarkWarnAbs && task_p->WatchdogTimeout && !task_p->watchdogWarn) {
-			task_p->watchdogWarn = true;
-			logdAssert(_WARN_, "Watchdog for Task %s, has reached warning level %u, High water mark is %u, Timout set to %u", task_p->pcName, task_p->watchdogHighWatermarkWarnAbs, task_p->watchdogHighWatermarkAbs, task_p->WatchdogTimeout);
-		}
-	}
-	initd.globalInitMutexGive();
-	xSemaphoreGive(watchdogMutex);
-	return;
 }
 
 /* *********************************** Task resources management *********************************** */
@@ -745,7 +745,7 @@ uint8_t tasks::taskResourceLink(task_resource_t** taskResourceRoot_pp, void* tas
 	}
 	//logdAssert(_DEBUG_, "Trying to link in taskResourceObj_p %p to taskResourceRoot_pp %p, which is pointing to %p", taskResourceObj_p, taskResourceRoot_pp, *taskResourceRoot_pp);
 	if ((taskResourceDesc_p = malloc(sizeof(task_resource_t))) == NULL) {
-		logdAssert(_INFO_, "Could not allocate memory for resource descriptor");
+		logdAssert(_ERR_, "Could not allocate memory for resource descriptor");
 		return(_TASKS_RESOURCES_EXHAUSTED_);
 	}
 	
@@ -766,7 +766,7 @@ uint8_t tasks::taskResourceLink(task_resource_t** taskResourceRoot_pp, void* tas
 		//logdAssert(_DEBUG_, "root pointer is now (*taskResourceRoot_pp) is now %p", *taskResourceRoot_pp);
 		//logdAssert(_DEBUG_, "the created object descriptor address (taskResourceDesc_p) is %p", taskResourceDesc_p);
 		//logdAssert(_DEBUG_, "and its content is: prev %p, object %p, next %p", ((task_resource_t*)taskResourceDesc_p)->prevResource_p, ((task_resource_t*)taskResourceDesc_p)->taskResource_p, ((task_resource_t*)taskResourceDesc_p)->nextResource_p);
-		//ogdAssert(_DEBUG_, "and its successor content is: prev %p, object %p, next %p", ((task_resource_t*)taskResourceDesc_p)->nextResource_p->prevResource_p, ((task_resource_t*)taskResourceDesc_p)->nextResource_p->taskResource_p, ((task_resource_t*)taskResourceDesc_p)->nextResource_p->nextResource_p);
+		//logdAssert(_DEBUG_, "and its successor content is: prev %p, object %p, next %p", ((task_resource_t*)taskResourceDesc_p)->nextResource_p->prevResource_p, ((task_resource_t*)taskResourceDesc_p)->nextResource_p->taskResource_p, ((task_resource_t*)taskResourceDesc_p)->nextResource_p->nextResource_p);
 
 	}
 	//logdAssert(_DEBUG_, "Resource descriptor successfully linked-in");
@@ -923,7 +923,7 @@ void* tasks::taskMalloc(task_desc_t* task_p, int size) {
 	//logdAssert(_DEBUG_, "Allocating memory of size: %u: requested from task: %s", size, task_p->pcName)
 	taskInitMutexTake(task_p);
 	if ((mem_p = malloc(size + sizeof(int))) == NULL) {
-		logdAssert(_ERR_, "Could not allocate memory");
+		logdAssert(_WARN_, "Could not allocate memory");
 		taskInitMutexGive(task_p);
 		return(NULL);
 	}
@@ -1006,7 +1006,7 @@ uint8_t tasks::taskMfreeAll(task_desc_t* task_p) {
 		logdAssert(_ERR_, "API ERROR, task_p = NULL");
 		return(_TASKS_API_PARAMETER_ERROR_);
 	}
-	//logdAssert(_DEBUG_, "Freing all heap memory allocated by task: %s", task_p->pcName);
+	logdAssert(_DEBUG_, "Freing all heap memory allocated by task: %s", task_p->pcName);
 	taskInitMutexTake(task_p);
 	//#ifdef debug
 
@@ -1055,3 +1055,203 @@ void tasks::decHeapStats(task_desc_t* task_p, int size) {
 /* ---------------------------------------- END:decHeapStats ----------------------------------------*/
 
 /* ******************************** END Memory resources management ******************************** */
+
+/* *************************** Task Management/watchdog core tasks  ******************************** */
+/* These tasks are periodic core init OS, monitoring spawned tasks, restarting those ig crashed      */
+/* or if watchdog expired, collecting and logging system and task statistics, and restarting the     */
+/* system if there is no other way out, or if these services are not responding - monitored by the   */
+/* Arduino main loop                                                                                 */
+/* ------------------------------------------------------------------------------------------------- */
+/* Public methods:                                                                                   */
+/* void tasks::kickTaskWatchdogs(...);                                                               */
+/*      tasks method to kick the watchdog in case task_dec_t.WatchdogTimeout != 0 [??? 10 ms ???]    */
+/* void tasks::taskPanic(...);                                                                       */
+/*      Initiates a graceful task panic exception handling, task will be terminated and it's         */
+/*      resources will be collected and cleaned.  The task might be restarted depending on           */
+/*      task_dec_t.WatchdogTimeout (if 0 the task will not be restarted, otherwise it will....       */
+/*                                                                                                   */
+/* Private methods:                                                                                  */
+/* void tasks:: runTaskWatchdogs(...)                                                                */
+/*         A core tasks timer method to run periodic maintenance tasks, checking watchdogs, task-    */
+/*         health, collecting and reporting statistics, etc.                                         */
+/*                                                                                                   */
+/* --------------------------------------------------------------------------------------------------*/
+
+/* --------------------------------- - Public:kickTaskWatchdogs()- --------------------------------- */
+/* void tasks::kickTaskWatchdogs(task_desc_t* task_p)                                                */
+/*	Description:  This method kicks the watchdog for task: task_p and needs to be called frequently  */
+/*                with a periodicy less than defined in task_desc_t.WatchdogTimeout                  */
+/*  Properties:   Public method. This method is thread safe.                                         */
+/*  Return codes: void                                                                               */
+void tasks::kickTaskWatchdogs(task_desc_t* task_p) {
+	task_p->watchDogTimer = 0; //atomic
+	return;
+}
+/* ---------------------------------- - END:kickTaskWatchdogs()- ----------------------------------- */
+
+/* ------------------------------------- - Public:taskPanic()- ------------------------------------- */
+/* void tasks::taskPanic(task_desc_t* task_p)                                                        */
+/*	Description:  Initiates a graceful task panic exception handling, task will be terminated and    */
+/*                it's resources will be collected and cleaned.  The task might be restarted         */
+/*                depending on task_dec_t.WatchdogTimeout (if 0 the task will not be restarted,      */
+/*                otherwise it will....
+/*  Properties:   Public method. This method is thread safe.                                         */
+/*  Return codes: void                                                                               */
+void tasks::taskPanic(task_desc_t* task_p) {
+	initd.taskMfreeAll(task_p);
+	//release any other resources
+	vTaskDelete(NULL);
+}
+/* -------------------------------------- - END:taskPanic() - -------------------------------------- */
+
+/* ---------------------------------- - Public:taskExceptions()- ----------------------------------- */
+
+// Stack-overflow management void vApplicationStackOverflowHook( TaskHandle_t xTask, signed char* pcTaskName );
+// Out of space handling void vApplicationMallocFailedHook( void );
+/* ------------------------------------ - END:taskExceptions()- ------------------------------------ */
+
+
+/* --------------------------------- - Private:runTaskWatchdogs() - -------------------------------- */
+/* void tasks::runTaskWatchdogs(TimerHandle_t xTimer)                                                */
+/*         A core tasks timer method to run periodic maintenance tasks, checking watchdogs, task-    */
+/*         health, collecting and reporting statistics, etc.                                         */
+/*         The periodicy of this task is set by: */
+/*                                                                                                   */
+void tasks::runTaskWatchdogs(TimerHandle_t xTimer) {
+	task_desc_t* task_p;
+	static int nexthunderedMSWatchdogTaskCnt = (100 / _TASK_WATCHDOG_MS_) + (100 % _TASK_WATCHDOG_MS_);
+	static int nextSecWatchdogTaskCnt = (1000 / _TASK_WATCHDOG_MS_) + (1000 % _TASK_WATCHDOG_MS_);
+	static int nextTenSecWatchdogTaskCnt = ((10 * 1000) / _TASK_WATCHDOG_MS_) + ((10 * 1000) % _TASK_WATCHDOG_MS_);
+	static int nextMinWatchdogTaskCnt = ((60 * 1000) / _TASK_WATCHDOG_MS_) + ((60 * 1000) % _TASK_WATCHDOG_MS_);
+	static int nextHourWatchdogTaskCnt = ((3600 * 1000) / _TASK_WATCHDOG_MS_) + ((3600 * 1000) % _TASK_WATCHDOG_MS_);
+	bool decreaseEscalationCnt = false;
+	static uint8_t minStatTaskWalk = 255;
+
+	if (xSemaphoreTake(watchdogMutex, 0) == pdFALSE) {
+		watchdogOverruns++;
+		//logdAssert(_DEBUG_, "Watchdog overrun, skipping this watchdog run");
+		return;
+	}
+	//	logdAssert(_DEBUG_, "Running watchdogs nexthunderedMSWatchdogTaskCnt %u", nexthunderedMSWatchdogTaskCnt); 
+	//	logdAssert(_DEBUG_, "Running watchdogs initd.watchdogTaskCnt %u initd.hunderedMsCnt %u", initd.watchdogTaskCnt, initd.hunderedMsCnt);
+	initd.watchdogTaskCnt++; //make sure it is initiated somewhere
+
+	//Every 100 ms tasks
+	if (initd.watchdogTaskCnt >= nexthunderedMSWatchdogTaskCnt) {
+		initd.hunderedMsCnt++;
+		//logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [100 ms]");
+		nexthunderedMSWatchdogTaskCnt = (initd.hunderedMsCnt + 1) * ((100 / _TASK_WATCHDOG_MS_) + (100 % _TASK_WATCHDOG_MS_));
+		// do short 1 second stuff here, long run tasks must be deferred evenly across the watchdog runs - 
+		//  any mutexes must be local in this "if second" context handled in here.
+
+		//Distributing minute statistics reporting work to 100 ms chunks.
+		if (minStatTaskWalk < noOfTasks) {
+			initd.getTaskDescByTID(minStatTaskWalk, &task_p);
+			logdAssert(_INFO_, "Heap size for Task %s is currently %u, with a high watermark of %u", task_p->pcName,
+				task_p->heapCurr, task_p->heapHighWatermarkAbs);
+            // If the task isn't running we cannot request the task watermark!!!!!!!!!!!
+			//logdAssert(_INFO_, "Stack use for Task %s is currently [currently unsupported], with a high watermark of %u",
+			//  	       task_p->pcName, uxTaskGetStackHighWaterMark(task_p->pvCreatedTask));
+			logdAssert(_INFO_, "CPU use for Task %s is currently [currently unsupported]", task_p->pcName);
+			logdAssert(_INFO_, "Watchdog statistics for Task %s, High water mark %u, Timout set to %u", task_p->pcName,
+				task_p->watchdogHighWatermarkAbs, task_p->WatchdogTimeout);
+			minStatTaskWalk++;
+		}
+	}
+
+	//*** Every 1 second tasks
+	if (initd.watchdogTaskCnt >= nextSecWatchdogTaskCnt) {
+		initd.secCnt++;
+		//logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [second] - %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt%60, initd.secCnt%60);
+		nextSecWatchdogTaskCnt = (initd.secCnt + 1) * ((1000 / _TASK_WATCHDOG_MS_) + (1000 % _TASK_WATCHDOG_MS_));
+		// do short 1 second stuff here, long run tasks must be deferred evenly across the watchdog runs - 
+		//  any mutexes must be local in this "if second" context handled in here.
+	}
+
+	//*** Every 10 second tasks
+	if (initd.watchdogTaskCnt >= nextTenSecWatchdogTaskCnt) {
+		initd.tenSecCnt++;
+		logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [10 seconds] - %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt % 60, initd.secCnt % 60);
+		nextTenSecWatchdogTaskCnt = (initd.tenSecCnt + 1) * (((10 * 1000) / _TASK_WATCHDOG_MS_) + ((10 * 1000) % _TASK_WATCHDOG_MS_));
+		//  do short 10 second stuff here, long run tasks must be deferred evenly across the watchdog runs - 
+		//  any mutexes must be local in this "if tensecond" context handled in here.
+	}
+
+	//*** Every minute tasks
+	if (initd.watchdogTaskCnt >= nextMinWatchdogTaskCnt) {
+		initd.minCnt++;
+		logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [minute]- %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt % 60, initd.secCnt % 60);
+		logdAssert(_INFO_, "Watchdog overruns: %u", watchdogOverruns);
+		nextMinWatchdogTaskCnt = (initd.minCnt + 1) * (((60 * 1000) / _TASK_WATCHDOG_MS_) + ((60 * 1000) % _TASK_WATCHDOG_MS_));
+		//  do short minute stuff here, long run tasks must be deferred evenly across the watchdog runs - 
+		//  any mutexes must be local in this "if minute" context handled in here.
+		decreaseEscalationCnt = true;
+		minStatTaskWalk = 0;
+	}
+
+	//*** Houerly tasks
+	if (initd.watchdogTaskCnt >= nextHourWatchdogTaskCnt) {
+		initd.hourCnt++;
+		logdAssert(_DEBUG_, "Running recurring watchdog maintenance tasks [hour]- %u hours %u minutes %u seconds", initd.hourCnt, initd.minCnt % 60, initd.secCnt % 60);
+		nextHourWatchdogTaskCnt = (initd.hourCnt + 1) * (((3600 * 1000) / _TASK_WATCHDOG_MS_) + ((3600 * 1000) % _TASK_WATCHDOG_MS_));
+		//  do short hour stuff here, long run tasks must be deferred evenly across the watchdog runs - 
+		//  any mutexes must be local in this "if hour" context handled in here.
+
+	}
+
+	initd.globalInitMutexTake();
+
+	for (uint8_t i = 0; i < noOfTasks; i++) {
+		//	logdAssert(_DEBUG_, "**classTasktable[%u] %p classTasktable[%u] %p", i, &classTasktable[i], i, classTasktable[i]);
+		//	logdAssert(_DEBUG_, "**task %p *task %p", &task_p, task_p);
+		initd.getTaskDescByTID(i, &task_p);
+		//	logdAssert(_DEBUG_, "**task %p *task %p", &task_p, task_p);
+		if (task_p == NULL) {
+			logdAssert(_PANIC_, "Could not find task by id: %u", i);
+			ESP.restart();
+		}
+		if (decreaseEscalationCnt && task_p->restartCnt) {
+			task_p->restartCnt--;
+		}
+
+		// if static task not alive - no matter what -> initd.taskMfreeAll(task_p); TODO
+
+		if (task_p->WatchdogTimeout && !(task_p->watchDogTimer == _WATCHDOG_DISABLE_)) {
+			if (initd.checkIfTaskAlive(task_p)) {
+				task_p->watchDogTimer = _WATCHDOG_DISABLE_;
+				logdAssert(_ERR_, "Task: %s  has stalled", task_p->pcName);
+				initd.taskMfreeAll(task_p);
+				// Free any other static task resources
+				initd.startTaskByTid(i, true, false);
+			}
+			if (++(task_p->watchDogTimer) >= task_p->WatchdogTimeout) {
+				task_p->watchDogTimer = _WATCHDOG_DISABLE_;
+				logdAssert(_ERR_, "Watchdog timeout for Task: %s", task_p->pcName);
+				initd.taskMfreeAll(task_p);
+				// Free any other static task resources
+				initd.startTaskByTid(i, true, false);
+			}
+			else {
+				if (task_p->watchDogTimer > task_p->watchdogHighWatermarkAbs) {
+					task_p->watchdogHighWatermarkAbs = task_p->watchDogTimer;
+					if (task_p->watchdogHighWatermarkWarnPerc && task_p->watchdogHighWatermarkWarnAbs <= task_p->watchdogHighWatermarkAbs) {
+						//The logging below is likely causing stack overflow - need to increase configMINIMAL_STACK_SIZE
+						//logdAssert(_WARN_, "Watchdog count for Task: %s reached Warn level of: %u  percent, watchdog counter: %u" ,task_p->pcName, task_p->watchdogHighWatermarkWarnPerc, task_p->watchDogTimer);
+					}
+				}
+			}
+		}
+		//logdAssert(_DEBUG_, "Breakpoint 8 Task: %s, restartcnt %u", task_p->pcName, task_p->restartCnt);
+		if (task_p->escalationRestartCnt && task_p->restartCnt >= task_p->escalationRestartCnt) {
+			logdAssert(_PANIC_, "Task: %s has restarted exessively, escalating to system restart", task_p->pcName);
+			ESP.restart();
+		}
+		if (task_p->watchdogHighWatermarkAbs >= task_p->watchdogHighWatermarkWarnAbs && task_p->WatchdogTimeout && !task_p->watchdogWarn) {
+			task_p->watchdogWarn = true;
+			logdAssert(_WARN_, "Watchdog for Task %s, has reached warning level %u, High water mark is %u, Timout set to %u", task_p->pcName, task_p->watchdogHighWatermarkWarnAbs, task_p->watchdogHighWatermarkAbs, task_p->WatchdogTimeout);
+		}
+	}
+	initd.globalInitMutexGive();
+	xSemaphoreGive(watchdogMutex);
+	return;
+}
