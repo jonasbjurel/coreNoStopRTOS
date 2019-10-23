@@ -36,7 +36,7 @@ void setup()
 {
 	Serial.begin(115200);
 	Serial.print("Init\n");
-	sleep(1); //necessary?
+	//sleep(1); //necessary?
 	initd.startInit();
 	Serial.print("Init Started\n");
 }

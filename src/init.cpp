@@ -67,7 +67,6 @@ tasks::tasks() {
 void tasks::startInit(void) {
 	globalInitMutex = xSemaphoreCreateRecursiveMutex();
 	logdAssert(_INFO_, "System is being started, initializing initd...");
-	sleep(1); // DO WE NEED TO SLEEP?
 	//logdAssert(_INFO_, "Initiating user init tasks...");
 	//logdAssert(_INFO_, "Size of init tasks is %u", sizeof((void*)initFuncs) / sizeof((void*)initFuncs[0]));
 	for (uint8_t i = 0; i < sizeof((void*)initFuncs)/ sizeof((void*)initFuncs[0]); i++) {

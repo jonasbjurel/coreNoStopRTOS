@@ -40,8 +40,7 @@ void myTestTaskInit(void) {
     initd.startStaticTask((TaskFunction_t)myStaticTestTask, "myTestTask 2", (void*)task2num_p, 2048, 2, tskNO_AFFINITY, 5, 60, 60, 0, 0);
     initd.startStaticTask((TaskFunction_t)myStaticTestTask, "myTestTask 3", (void*)task3num_p, 2048, 2, tskNO_AFFINITY, 5, 60, 60, 3, 0);
     initd.startStaticTask((TaskFunction_t)myStaticTestTask, "myTestTask 4", (void*)task4num_p, 2048, 2, tskNO_AFFINITY, _WATCHDOG_DISABLE_MONIT_, 60, 60, 0, 0);
-	initd.startStaticTask((TaskFunction_t)myStaticTestTask, "myTestTask 5", (void*)task5num_p, 2048, 2, tskNO_AFFINITY, _WATCHDOG_DISABLE_NO_MONIT_, 60, 60, 0, 0);
-
+	initd.startStaticTask((TaskFunction_t)myStaticTestTask, "myTestTask 5", (void*)task5num_p, 2048, 2, tskNO_AFFINITY, 0, 60, 60, 0, 0);
 } 
 
 void myStaticTestTask(task_desc_t* myTask) {
@@ -80,7 +79,7 @@ void myStaticTestTask(task_desc_t* myTask) {
 		break;
 
 	case 5:
-		logdAssert(_INFO_, "Task: %s started, Not monitored by init, allocating 2048 Bytes heap and then self-terminated", myTask->pcName);
+		logdAssert(_INFO_, "Task: %s, Not monitored by init, allocating 2048 Bytes heap and then self-terminated", myTask->pcName);
 		break;
 
 	default:
