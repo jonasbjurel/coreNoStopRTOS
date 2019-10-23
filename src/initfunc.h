@@ -13,37 +13,25 @@
  *                                                                                                   *
  * ************************************************************************************************* */
 
-/* ************************************************************************************************* *
- * Name:				open_telemetry.ino                                                           *
- * Created:			    2019-09-27                                                                   *
- * Originator:		    Jonas Bjurel                                                                 *
- * Short description:   Provides an open source openTX/FreeSky telemetry, at first focused on        *
- *                      fixed wing use-cases.                                                        *
- * Resources:           github, WIKI .....                                                           *
- * ************************************************************************************************* */
-
-#include "src/init.h"
-
-// Define Function Prototypes that use User Types below here or use a .h file
-//
+ /* ************************************************************************************************ *
+  * Project:			 coreNoStopRTOS/www.......                                                   *
+  * Name:				 initfunc.h                                                                  *
+  * Created:			 2019-10-18                                                                  *
+  * Originator:		     Jonas Bjurel                                                                *
+  * Short description:   Defines system init functions to be called at system restart, before        *
+  *                      coreNoStopRTOS scheduling has started. These functions will run in to       *
+  *                      completion, in series, without any parallelism                              *
+  * Resources:           github, WIKI .....                                                          *
+  * ************************************************************************************************ */
 
 
-// Define Functions below here or use other .ino or cpp files
-//
 
-// The setup() function runs once each time the micro-controller starts
-void setup()
-{
-	Serial.begin(115200);
-	Serial.print("Init\n");
-	//sleep(1); //necessary?
-	initd.startInit();
-	Serial.print("Init Started\n");
-}
+#ifndef initFunc_HEADER_INCLUDED
+	#define initFunc_HEADER_INCLUDED
+	#include "init.h"
+	#include "../ci/myTestTask.h"
 
-// Add the main program code into the continuous loop() function
-void loop()
-{
-	Serial.print("Main\n");
-	sleep(10);
-}
+    // Define the list of init functions to be called at system restart
+    void (*initFuncs[])() = { myTestTaskInit };
+
+#endif

@@ -14,7 +14,7 @@
  * ************************************************************************************************* */
 
  /* ************************************************************************************************ *
-  * Project:			 coreNoStopRTOS/www.......                                                   * 
+  * Project:			 coreNoStopRTOS/www.......                                                   *
   * Name:				 myTestTask.h                                                                *
   * Created:			 2019-09-27                                                                  *
   * Originator:		     Jonas Bjurel                                                                *
@@ -22,15 +22,19 @@
   *                      functions...                                                                *
   * Resources:           github, WIKI .....                                                          *
   * ************************************************************************************************ */
+
 #ifndef arduino_HEADER_INCLUDED
 	#define arduino_HEADER_INCLUDED
 	#include <Arduino.h>
 #endif
 
+
+
 #ifndef myTestTask_HEADER_INCLUDED
+    #include "../src/log.h"
+    #include "../src/init.h"
 	#define  myTestTask_HEADER_INCLUDED
-	#include "../src/log.h"
-	#include "../src/init.h"
-	
-	void myTestTask(task_desc_t* myTask);
+	void myTestTaskInit(void);
+	void myStaticTestTask(task_desc_t* myTask);
+	void myDynamicTestTask(char* taskName);
 #endif

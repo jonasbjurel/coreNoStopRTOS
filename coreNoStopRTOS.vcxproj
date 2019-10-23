@@ -100,15 +100,15 @@
   <ItemGroup>
     <ClInclude Include="ci\myTestTask.h" />
     <ClInclude Include="src\init.h" />
+    <ClInclude Include="src\initfunc.h" />
     <ClInclude Include="src\log.h" />
-    <ClInclude Include="src\mq.h" />
     <ClInclude Include="__vm\.coreNoStopRTOS.vsarduino.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ci\myTestTask.cpp" />
     <ClCompile Include="src\init.cpp" />
+    <ClCompile Include="src\initfunc.cpp" />
     <ClCompile Include="src\log.cpp" />
-    <ClCompile Include="src\mq.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="coreNoStopRTOS.ino">
